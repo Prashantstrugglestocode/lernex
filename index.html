@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>lernex · learn linux/os/bash without dying of boredom</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Major+Mono+Display&family=VT323&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🐧%3C/text%3E%3C/svg%3E" />
+
+  <!-- React + Babel via CDN (no build step — just open this file) -->
+  <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.24.0/babel.min.js"></script>
+
+  <!-- App data (sets window.DATA) -->
+  <script src="data.js"></script>
+</head>
+
+<body>
+  <div id="root"></div>
+
+  <!-- ================================================================
+       REACT APP — inline so it works opening this file directly
+       (no XHR for the JSX file, no local server needed)
+       ================================================================ -->
+  <script type="text/babel" data-presets="react">
+
+  const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+  // ============================================================
+  //  STATE HELPERS
+  // ============================================================
+  const STORAGE_KEY = 'lernex_v1';
+
+  const defaultState = () => ({
+    xp: 0,
+    cardsSeen: {},
+    quizCorrect: 0,
+    quizSeen: 0,
+    termDone: {},
+    bashDone: {},
+    portsRounds: 0,
+    fsVisited: {},
+    streak: 0,
+    lastActive: null,
+    milestonesHit: {},
+  });
+
+  const loadState = () => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return defaultState();
+      return { ...defaultState(), ...JSON.parse(raw) };
+    } catch { return defaultState(); }
+  };
+
+  const persist = (s) => {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch {}
+  };
+
+  const todayStr = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  };
+  const dayDiff = (a, b) => Math.round((new Date(b+'T00:00:00') - new Date(a+'T00:00:00')) / 86400000);
+
+  const pick = (a) => a[Math.floor(Math.random()*a.length)];
+  const shuffle = (arr) => {
+    const a = arr.slice();
+    for (let i = a.length-1; i > 0; i--) {
+      const j = Math.floor(Math.random()*(i+1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  };
+
+  const levelFor = (xp) => {
+    let cur = DATA.levels[0];
+    for (const l of DATA.levels) if (xp >= l.xp) cur = l;
+    return cur;
+  };
+  const nextLevel = (xp) => DATA.levels.find(l => l.xp > xp) || null;
+
+  // ============================================================
+  //  GAME STATE HOOK
+  // ============================================================
+  function useGame() {
+    const [state, setStateRaw] = useState(loadState);
+    const [toast, setToast] = useState(null);   // {msg, kind}
+    const [levelUp, setLevelUp] = useState(null); // {rank, lvl}
+    const toastTimer = useRef(null);
+    const stateRef = useRef(state);
+    useEffect(() => { stateRef.current = state; }, [state]);
+
+    const setState = useCallback((updater) => {
+      setStateRaw(prev => {
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        persist(next);
+        return next;
+      });
+    }, []);
+
+    const showToast = useCallback((msg, kind = '', dur = 1700) => {
+      setToast({ msg, kind });
+      clearTimeout(toastTimer.current);
+      toastTimer.current = setTimeout(() => setToast(null), dur);
+    }, []);
+
+    // Streak bump (runs on every XP gain)
+    const bumpStreakInPlace = (s) => {
+      const today = todayStr();
+      if (s.lastActive === today) return s;
+      let streak = s.streak;
+      if (s.lastActive) {
+        const diff = dayDiff(s.lastActive, today);
+        if (diff === 1) streak += 1;
+        else if (diff > 1) streak = 1;
+      } else {
+        streak = 1;
+      }
+      const milestonesHit = { ...s.milestonesHit };
+      let xp = s.xp;
+      const milestoneMsgs = [];
+      for (const m of DATA.streakMilestones) {
+        if (streak >= m.days && !milestonesHit[m.days]) {
+          milestonesHit[m.days] = true;
+          xp += m.xp;
+          milestoneMsgs.push({ msg: `🔥 ${m.msg}  +${m.xp} xp`, kind: 'xp' });
+        }
+      }
+      if (milestoneMsgs.length) {
+        // show after a short delay so the XP toast lands first
+        setTimeout(() => milestoneMsgs.forEach((m, i) =>
+          setTimeout(() => showToast(m.msg, m.kind, 4200), i * 4400)
+        ), 200);
+      }
+      return { ...s, streak, lastActive: today, milestonesHit, xp };
+    };
+
+    const addXP = useCallback((amount, opts = {}) => {
+      setState(prev => {
+        const before = levelFor(prev.xp).lvl;
+        let next = { ...prev, xp: prev.xp + amount };
+        if (!opts.skipStreak) next = bumpStreakInPlace(next);
+        const after = levelFor(next.xp).lvl;
+        if (after > before) {
+          const lvl = levelFor(next.xp);
+          setTimeout(() => setLevelUp({ rank: lvl.name, lvl: lvl.lvl }), 300);
+        }
+        return next;
+      });
+    }, [setState]);
+
+    const reset = useCallback(() => {
+      const fresh = defaultState();
+      setState(fresh);
+      showToast('progress wiped. fresh start ✨', 'xp');
+    }, [setState, showToast]);
+
+    return { state, setState, addXP, showToast, toast, levelUp, setLevelUp, reset };
+  }
+
+  // ============================================================
+  //  TOP BAR
+  // ============================================================
+  function TopBar({ state, onReset }) {
+    const cur = levelFor(state.xp);
+    const nxt = nextLevel(state.xp);
+    const xpFromCur = state.xp - cur.xp;
+    const span = nxt ? (nxt.xp - cur.xp) : (xpFromCur || 1);
+    const pct = nxt ? Math.min(100, Math.round((xpFromCur / span) * 100)) : 100;
+
+    return (
+      <header className="topbar">
+        <div className="brand">
+          <span className="logo">🐧</span>
+          <h1>lernex<span className="sparkle">✨</span></h1>
+        </div>
+        <div className="stats">
+          <div className="stat" title="Level">
+            <span className="stat-label">lvl</span>
+            <span className="stat-val">{cur.lvl}</span>
+            <span className="stat-rank">{cur.name}</span>
+          </div>
+          <div className="stat xp-stat" title="XP — earn by playing">
+            <div className="xp-bar-wrap">
+              <div className="xp-bar" style={{ width: pct + '%' }} />
+              <span className="xp-text">{nxt ? `${state.xp} / ${nxt.xp} xp` : `${state.xp} xp (MAX)`}</span>
+            </div>
+          </div>
+          <div className="stat" title="Daily streak">
+            <span className="stat-val streak-pulse" key={state.streak}>🔥 {state.streak}</span>
+          </div>
+          <button className="reset-btn" title="reset all progress" onClick={() => { if (confirm("reset ALL progress? this can't be undone fr.")) onReset(); }}>↺</button>
+        </div>
+      </header>
+    );
+  }
+
+  // ============================================================
+  //  TABS
+  // ============================================================
+  const TABS = [
+    { id: 'home',     label: '🏠 home' },
+    { id: 'cards',    label: '🃏 flashcards' },
+    { id: 'quiz',     label: '🧠 quiz' },
+    { id: 'terminal', label: '💻 terminal' },
+    { id: 'bash',     label: '⚡ bash gym' },
+    { id: 'ports',    label: '🔌 port match' },
+    { id: 'fs',       label: '📁 filesystem' },
+  ];
+
+  function Tabs({ mode, setMode }) {
+    return (
+      <nav className="tabs">
+        {TABS.map(t =>
+          <button key={t.id}
+            className={`tab ${mode === t.id ? 'active' : ''}`}
+            onClick={() => setMode(t.id)}>{t.label}</button>
+        )}
+      </nav>
+    );
+  }
+
+  // ============================================================
+  //  HOME
+  // ============================================================
+  function Home({ state, setMode }) {
+    const cards = [
+      { id: 'cards',    icon: '🃏', title: 'flashcards', desc: 'flip cards for filesystem, commands, networking, OS concepts. swipe to learn.', xp: '+2 xp / card' },
+      { id: 'quiz',     icon: '🧠', title: 'quiz',       desc: 'multiple-choice questions. instant feedback. test ur galaxy brain.', xp: '+5 xp / right' },
+      { id: 'terminal', icon: '💻', title: 'terminal',   desc: 'type real commands. fake terminal grades u. learn by doing.', xp: '+10 xp / task' },
+      { id: 'bash',     icon: '⚡', title: 'bash gym',   desc: 'write actual bash one-liners + scripts. loops, conditionals, sed/awk. lvl up.', xp: '+5–30 xp / exercise' },
+      { id: 'ports',    icon: '🔌', title: 'port match', desc: 'match common ports to services. ssh=22, https=443, etc.', xp: '+3 xp / match' },
+      { id: 'fs',       icon: '📁', title: 'filesystem', desc: 'click thru the linux directory tree. learn what /etc /var /usr actually do.', xp: 'explore freely' },
+    ];
+
+    const stats = [
+      { label: 'cards learned',  val: `${Object.keys(state.cardsSeen).length} / ${DATA.flashcards.length}` },
+      { label: 'quiz correct',   val: state.quizCorrect },
+      { label: 'quiz attempted', val: state.quizSeen },
+      { label: 'term tasks',     val: `${Object.keys(state.termDone).length} / ${DATA.terminal.length}` },
+      { label: 'bash gym',       val: `${Object.keys(state.bashDone).length} / ${DATA.bashGym.length}` },
+      { label: 'fs explored',    val: `${Object.keys(state.fsVisited).length} / ${DATA.filesystem.length}` },
+      { label: 'port rounds',    val: state.portsRounds },
+      { label: 'streak',         val: `🔥 ${state.streak}` },
+    ];
+
+    return (
+      <section className="mode active">
+        <div className="hero">
+          <h2>lernex</h2>
+          <p className="tagline">learn linux, OS, networking, and bash without dying of boredom. no cap.</p>
+        </div>
+        <div className="mode-grid">
+          {cards.map(c =>
+            <button key={c.id} className="mode-card" onClick={() => setMode(c.id)}>
+              <div className="mc-icon">{c.icon}</div>
+              <h3>{c.title}</h3>
+              <p>{c.desc}</p>
+              <span className="mc-xp">{c.xp}</span>
+            </button>
+          )}
+        </div>
+        <div className="progress-summary">
+          <h3>ur progress</h3>
+          <div className="prog-grid">
+            {stats.map(s =>
+              <div key={s.label} className="prog-item">
+                <div className="pi-label">{s.label}</div>
+                <div className="pi-val">{s.val}</div>
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  // ============================================================
+  //  FLASHCARDS
+  // ============================================================
+  function Cards({ state, setState, addXP, showToast }) {
+    const [cat, setCat] = useState('all');
+    const list = useMemo(() => cat === 'all' ? DATA.flashcards : DATA.flashcards.filter(c => c.cat === cat), [cat]);
+    const [idx, setIdx] = useState(0);
+    const [flipped, setFlipped] = useState(false);
+
+    useEffect(() => { setIdx(0); setFlipped(false); }, [cat]);
+
+    const c = list[idx] || DATA.flashcards[0];
+    const id = `${c.cat}|${c.front}`;
+
+    const prev = () => { setIdx((idx - 1 + list.length) % list.length); setFlipped(false); };
+    const next = () => { setIdx((idx + 1) % list.length); setFlipped(false); };
+    const mark = () => {
+      if (!state.cardsSeen[id]) {
+        setState(s => ({ ...s, cardsSeen: { ...s.cardsSeen, [id]: true } }));
+        addXP(2);
+        showToast(`+2 xp · ${pick(DATA.hype)}`, 'xp');
+      } else {
+        showToast('already learned this one ✓');
+      }
+      setTimeout(next, 350);
+    };
+
+    return (
+      <section className="mode active">
+        <div className="cards-toolbar">
+          <label className="cat-pick">
+            category:
+            <select value={cat} onChange={e => setCat(e.target.value)}>
+              <option value="all">all</option>
+              <option value="filesystem">filesystem</option>
+              <option value="commands">commands</option>
+              <option value="perms">permissions</option>
+              <option value="process">processes</option>
+              <option value="os">OS concepts</option>
+              <option value="net">networking</option>
+              <option value="pkg">package mgmt</option>
+              <option value="tools">tools & shells</option>
+              <option value="bash">bash scripting</option>
+              <option value="text">text processing</option>
+              <option value="sec">security</option>
+            </select>
+          </label>
+          <span className="counter">card {idx+1} / {list.length}</span>
+        </div>
+        <div className="card-stage">
+          <div className={`flashcard ${flipped ? 'flipped' : ''}`} onClick={() => setFlipped(f => !f)}>
+            <div className="card-face card-front">
+              <div className="card-cat-tag">{c.cat}</div>
+              <div className="card-term">{c.front}</div>
+              <div className="card-hint">click to flip ⇣</div>
+            </div>
+            <div className="card-face card-back">
+              <div className="card-explain">{c.back}</div>
+              <div className="card-vibe">{c.vibe}</div>
+            </div>
+          </div>
+        </div>
+        <div className="card-controls">
+          <button className="btn ghost" onClick={prev}>← prev</button>
+          <button className="btn primary" onClick={mark}>got it ✓ (+2 xp)</button>
+          <button className="btn ghost" onClick={next}>next →</button>
+        </div>
+      </section>
+    );
+  }
+
+  // ============================================================
+  //  QUIZ
+  // ============================================================
+  const QUIZ_SIZE = 10;
+  function Quiz({ state, setState, addXP }) {
+    const [deck, setDeck] = useState(() => shuffle(DATA.quiz).slice(0, QUIZ_SIZE));
+    const [pos, setPos] = useState(0);
+    const [score, setScore] = useState(0);
+    const [picked, setPicked] = useState(null); // index of picked option
+    const [done, setDone] = useState(false);
+
+    const restart = () => {
+      setDeck(shuffle(DATA.quiz).slice(0, QUIZ_SIZE));
+      setPos(0); setScore(0); setPicked(null); setDone(false);
+    };
+
+    if (done) {
+      const bonus = score === deck.length ? 20 : (score >= deck.length * 0.8 ? 10 : 0);
+      return (
+        <section className="mode active">
+          <div className="quiz-done">
+            <h2>quiz complete 🎉</h2>
+            <p>u got <strong>{score} / {deck.length}</strong> · {
+              score === deck.length ? 'PERFECT ✨ +20 bonus xp' :
+              bonus ? '+10 bonus xp' : 'shake it off, run it back'
+            }</p>
+            <button className="btn primary" onClick={restart}>play again</button>
+          </div>
+        </section>
+      );
+    }
+
+    const q = deck[pos];
+    const answer = (i) => {
+      if (picked !== null) return;
+      setPicked(i);
+      setState(s => ({ ...s, quizSeen: s.quizSeen + 1, quizCorrect: i === q.answer ? s.quizCorrect + 1 : s.quizCorrect }));
+      if (i === q.answer) {
+        setScore(s => s + 1);
+        addXP(5);
+      }
+    };
+
+    const goNext = () => {
+      if (pos + 1 >= deck.length) {
+        const finalScore = score;
+        const finishBonus = finalScore === deck.length ? 20 : (finalScore >= deck.length * 0.8 ? 10 : 0);
+        if (finishBonus) addXP(finishBonus);
+        setDone(true);
+      } else {
+        setPos(p => p + 1);
+        setPicked(null);
+      }
+    };
+
+    const isCorrect = picked === q.answer;
+
+    return (
+      <section className="mode active">
+        <div className="quiz-head">
+          <span className="counter">q {pos+1} / {deck.length}</span>
+          <span className="counter">score: {score}</span>
+        </div>
+        <div className="quiz-card">
+          <h3 className="quiz-q">{q.q}</h3>
+          <div className="quiz-options">
+            {q.options.map((opt, i) =>
+              <button key={i}
+                className={`opt ${picked !== null && i === q.answer ? 'correct' : ''} ${picked === i && i !== q.answer ? 'wrong' : ''}`}
+                disabled={picked !== null}
+                onClick={() => answer(i)}>{opt}</button>
+            )}
+          </div>
+          {picked !== null && (
+            <div className={`quiz-feedback ${isCorrect ? 'good' : 'bad'}`}>
+              <strong>{isCorrect ? pick(DATA.hype) : pick(DATA.sad)}</strong><br/>{q.explain}
+            </div>
+          )}
+          {picked !== null && (
+            <button className="btn primary" onClick={goNext}>{pos + 1 >= deck.length ? 'see results →' : 'next question →'}</button>
+          )}
+        </div>
+      </section>
+    );
+  }
+
+  // ============================================================
+  //  TERMINAL
+  // ============================================================
+  const normalizeCmd = (s) => s.replace(/\s+/g, ' ').trim();
+
+  function Terminal({ state, setState, addXP, showToast }) {
+    const pickUndone = () => {
+      const undone = DATA.terminal.map((_, i) => i).filter(i => !state.termDone[i]);
+      return undone.length ? pick(undone) : Math.floor(Math.random() * DATA.terminal.length);
+    };
+    const [idx, setIdx] = useState(pickUndone);
+    const [lines, setLines] = useState([]);
+    const [input, setInput] = useState('');
+    const [hintOn, setHintOn] = useState(false);
+    const inputRef = useRef(null);
+    const outputRef = useRef(null);
+
+    const t = DATA.terminal[idx];
+
+    useEffect(() => {
+      setLines([{ cls: 'sys', text: `welcome to fakeOS 0.1 — type a command, hit enter (hint: ${t.hint.slice(0,60)}${t.hint.length>60?'...':''})` }]);
+      setInput('');
+      setHintOn(false);
+      inputRef.current?.focus();
+    }, [idx]);
+
+    useEffect(() => {
+      if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight;
+    }, [lines]);
+
+    const submit = (e) => {
+      if (e.key !== 'Enter') return;
+      const raw = input;
+      if (!raw.trim()) return;
+      const newLines = [...lines, { cls: 'user', text: `alice@fakeOS:~$ ${raw}` }];
+      setInput('');
+      const norm = normalizeCmd(raw);
+      const ok = t.accept.some(a => normalizeCmd(a) === norm);
+      if (ok) {
+        newLines.push({ cls: 'ok', text: t.output });
+        newLines.push({ cls: 'ok', text: `✓ ${pick(DATA.hype)} · ${t.vibe}` });
+        setLines(newLines);
+        if (!state.termDone[idx]) {
+          setState(s => ({ ...s, termDone: { ...s.termDone, [idx]: true } }));
+          addXP(10);
+          showToast(`+10 xp · ${pick(DATA.hype)}`, 'xp');
+        } else {
+          showToast('already nailed this one ✓');
+        }
+        setTimeout(() => setIdx(pickUndone()), 1400);
+      } else {
+        newLines.push({ cls: 'err', text: `bash: ${raw.split(' ')[0]}: not what we want here — try again` });
+        newLines.push({ cls: 'sys', text: `  ${pick(DATA.sad)} (tap hint below 💡)` });
+        setLines(newLines);
+      }
+    };
+
+    return (
+      <section className="mode active">
+        <div className="term-head">
+          <span className="counter">task {idx+1} / {DATA.terminal.length}</span>
+          <button className="btn ghost small" onClick={() => setIdx((idx+1) % DATA.terminal.length)}>skip →</button>
+        </div>
+        <div className="term-task">
+          <span className="task-label">ur mission:</span>
+          <span className="task-text">{t.task}</span>
+        </div>
+        <div className="terminal">
+          <div className="term-output" ref={outputRef}>
+            {lines.map((l, i) => <span key={i} className={`term-line ${l.cls}`}>{l.text}</span>)}
+          </div>
+          <div className="term-input-line">
+            <span className="prompt">alice@fakeOS:~$</span>
+            <input ref={inputRef}
+              className="term-input"
+              autoComplete="off" spellCheck="false" autoCapitalize="off"
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={submit}/>
+          </div>
+        </div>
+        <button className="btn ghost small" onClick={() => setHintOn(h => !h)}>{hintOn ? 'hide hint' : 'show hint 💡'}</button>
+        {hintOn && <div className="hint-text">💡 {t.hint}</div>}
+      </section>
+    );
+  }
+
+  // ============================================================
+  //  BASH GYM
+  // ============================================================
+  const normalizeBash = (s) => s
+    .split('\n')
+    .map(l => l.split('#')[0])
+    .map(l => l.replace(/\s+/g, ' ').trim())
+    .filter(l => l.length > 0)
+    .join('\n')
+    .toLowerCase();
+
+  const bashCheck = (raw, patterns) => {
+    const n = normalizeBash(raw);
+    return patterns.some(p => {
+      if (p instanceof RegExp) {
+        if (p.test(n)) return true;
+        return n.split('\n').some(line => p.test(line));
+      }
+      return normalizeBash(p) === n;
+    });
+  };
+
+  function BashGym({ state, setState, addXP, showToast }) {
+    const [idx, setIdx] = useState(0);
+    const [code, setCode] = useState('');
+    const [feedback, setFeedback] = useState(null); // {kind, html}
+    const [explainOn, setExplainOn] = useState(false);
+
+    const b = DATA.bashGym[idx];
+
+    useEffect(() => {
+      setCode(b.starter || '');
+      setFeedback(null);
+      setExplainOn(false);
+    }, [idx]);
+
+    const run = () => {
+      if (!code.trim()) {
+        setFeedback({ kind: 'info', text: '✏️ write something first king' });
+        return;
+      }
+      const ok = bashCheck(code, b.accept);
+      if (ok) {
+        setFeedback({ kind: 'good', text: `✓ ${pick(DATA.hype)}` });
+        setExplainOn(true);
+        if (!state.bashDone[idx]) {
+          setState(s => ({ ...s, bashDone: { ...s.bashDone, [idx]: true } }));
+          addXP(b.xp);
+          showToast(`+${b.xp} xp · ${pick(DATA.hype)}`, 'xp');
+        } else {
+          showToast('already cleared ✓');
+        }
+      } else {
+        setFeedback({ kind: 'bad', text: `not quite. ${pick(DATA.sad)}. tap "show hint" or "reveal solution" 💡` });
+      }
+    };
+
+    const showHint = () => setFeedback({ kind: 'info', text: `💡 hint: ${b.hint}` });
+    const showSolution = () => {
+      setFeedback({ kind: 'info', solution: b.solution, text: '📜 solution:' });
+      setExplainOn(true);
+    };
+    const reset = () => { setCode(b.starter || ''); setFeedback(null); setExplainOn(false); };
+
+    const onKeyDown = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        run();
+      }
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        const ta = e.target;
+        const s = ta.selectionStart, en = ta.selectionEnd;
+        const nv = ta.value.slice(0, s) + '  ' + ta.value.slice(en);
+        setCode(nv);
+        requestAnimationFrame(() => { ta.selectionStart = ta.selectionEnd = s + 2; });
+      }
+    };
+
+    return (
+      <section className="mode active">
+        <div className="bash-head">
+          <div className="bash-meta">
+            <span className="counter">exercise {idx+1} / {DATA.bashGym.length}</span>
+            <span className={`level-tag ${b.level}`}>{b.level}</span>
+            <span className="counter">+{b.xp} xp</span>
+            {state.bashDone[idx] && <span className="counter" style={{color:'#2dd882', borderColor:'#2dd882'}}>✓ done</span>}
+          </div>
+          <div className="bash-nav">
+            <button className="btn ghost small" onClick={() => setIdx((idx-1+DATA.bashGym.length) % DATA.bashGym.length)}>← prev</button>
+            <button className="btn ghost small" onClick={() => setIdx((idx+1) % DATA.bashGym.length)}>next →</button>
+          </div>
+        </div>
+        <div className="bash-card">
+          <h3 className="bash-title">{idx+1}. {b.title}</h3>
+          <p className="bash-task">{b.task}</p>
+          <div className="bash-editor-wrap">
+            <div className="editor-label">ur code (bash): ⌘/Ctrl+Enter to check</div>
+            <textarea className="bash-editor"
+              spellCheck="false" autoCapitalize="off"
+              placeholder="# write ur bash here..."
+              value={code}
+              onChange={e => setCode(e.target.value)}
+              onKeyDown={onKeyDown}/>
+          </div>
+          <div className="bash-controls">
+            <button className="btn primary" onClick={run}>check ✓</button>
+            <button className="btn ghost" onClick={showHint}>show hint 💡</button>
+            <button className="btn ghost" onClick={showSolution}>reveal solution</button>
+            <button className="btn ghost" onClick={reset}>reset</button>
+          </div>
+          {feedback && (
+            <div className={`bash-feedback ${feedback.kind}`}>
+              <strong>{feedback.text}</strong>
+              {feedback.solution && (
+                <div style={{marginTop:'8px'}}>
+                  <code style={{background:'#04040c', color:'#00e5ff', padding:'4px 10px', borderRadius:'6px', fontFamily:'monospace', display:'inline-block'}}>{feedback.solution}</code>
+                </div>
+              )}
+            </div>
+          )}
+          {explainOn && (
+            <div className="bash-explain">
+              <strong>why this works:</strong> {b.explain}
+            </div>
+          )}
+        </div>
+      </section>
+    );
+  }
+
+  // ============================================================
+  //  PORTS
+  // ============================================================
+  function Ports({ state, setState, addXP, showToast }) {
+    const [round, setRound] = useState(() => shuffle(DATA.ports).slice(0, 6));
+    const [numbersOrder, setNumbersOrder] = useState(() => shuffle(round));
+    const [servicesOrder, setServicesOrder] = useState(() => shuffle(round));
+    const [selected, setSelected] = useState(null);
+    const [matched, setMatched] = useState({}); // {port: true}
+    const [wrongFlash, setWrongFlash] = useState(null); // port being flashed
+    const [feedback, setFeedback] = useState('');
+
+    const newRound = () => {
+      const r = shuffle(DATA.ports).slice(0, 6);
+      setRound(r);
+      setNumbersOrder(shuffle(r));
+      setServicesOrder(shuffle(r));
+      setSelected(null);
+      setMatched({});
+      setFeedback('');
+    };
+
+    const selectPort = (port) => {
+      if (matched[port]) return;
+      setSelected(port);
+    };
+
+    const attemptMatch = (srvPort) => {
+      if (matched[srvPort]) return;
+      if (selected === null) { setFeedback('pick a port first ☝️'); return; }
+      if (selected === srvPort) {
+        const newMatched = { ...matched, [srvPort]: true };
+        setMatched(newMatched);
+        setSelected(null);
+        addXP(3);
+        showToast(`+3 xp · ${pick(DATA.hype)}`, 'xp');
+        setFeedback('');
+        if (Object.keys(newMatched).length === round.length) {
+          setState(s => ({ ...s, portsRounds: s.portsRounds + 1 }));
+          addXP(10);
+          showToast('round cleared · +10 bonus xp 🎯', 'xp', 2500);
+        }
+      } else {
+        setWrongFlash(srvPort);
+        setFeedback(`❌ ${pick(DATA.sad)}`);
+        setTimeout(() => setWrongFlash(null), 400);
+      }
+    };
+
+    const matchedCount = Object.keys(matched).length;
+
+    return (
+      <section className="mode active">
+        <div className="ports-head">
+          <p className="instr">tap a <strong>port number</strong>, then tap its matching <strong>service</strong>.</p>
+          <span className="counter">matched: {matchedCount} / {round.length}</span>
+          <button className="btn primary small" onClick={newRound}>new round</button>
+        </div>
+        <div className="ports-board">
+          <div className="ports-col">
+            <h4>ports</h4>
+            <div>
+              {numbersOrder.map(p =>
+                <div key={p.port}
+                  className={`port-num ${selected === p.port ? 'selected' : ''} ${matched[p.port] ? 'matched' : ''}`}
+                  onClick={() => selectPort(p.port)}>{p.port}</div>
+              )}
+            </div>
+          </div>
+          <div className="ports-col">
+            <h4>services</h4>
+            <div>
+              {servicesOrder.map(p =>
+                <div key={p.port}
+                  className={`port-srv ${matched[p.port] ? 'matched' : ''} ${wrongFlash === p.port ? 'wrong-flash' : ''}`}
+                  onClick={() => attemptMatch(p.port)}>
+                  {p.service}<span className="srv-port">{p.note}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="ports-feedback">{feedback}</div>
+      </section>
+    );
+  }
+
+  // ============================================================
+  //  FILESYSTEM EXPLORER
+  // ============================================================
+  function FileSystem({ state, setState, addXP }) {
+    const [current, setCurrent] = useState('/');
+
+    const visit = (path) => {
+      setCurrent(path);
+      if (!state.fsVisited[path]) {
+        setState(s => ({ ...s, fsVisited: { ...s.fsVisited, [path]: true } }));
+        addXP(1, { skipStreak: false });
+      }
+    };
+
+    // Build tree order: root, then top-level + nested
+    const tree = useMemo(() => {
+      const root = DATA.filesystem.find(e => e.path === '/');
+      const top = DATA.filesystem
+        .filter(e => e.path !== '/' && e.path.lastIndexOf('/') === 0)
+        .sort((a, b) => a.path.localeCompare(b.path));
+      const out = [{ entry: root, indent: false }];
+      for (const e of top) {
+        out.push({ entry: e, indent: false });
+        const nested = DATA.filesystem.filter(x => x.path.startsWith(e.path + '/'));
+        for (const n of nested) out.push({ entry: n, indent: true });
+      }
+      return out;
+    }, []);
+
+    const e = DATA.filesystem.find(x => x.path === current) || DATA.filesystem[0];
+
+    return (
+      <section className="mode active">
+        <div className="fs-head">
+          <p className="instr">click any directory to learn what lives inside. +1 xp per new dir.</p>
+          <div className="fs-breadcrumb">{current}</div>
+        </div>
+        <div className="fs-board">
+          <div className="fs-tree-col">
+            <h4>directories</h4>
+            <div className="fs-tree">
+              {tree.map(({ entry, indent }) =>
+                <button key={entry.path}
+                  className={`fs-item ${indent ? 'indent' : ''} ${state.fsVisited[entry.path] ? 'visited' : ''} ${current === entry.path ? 'active' : ''}`}
+                  onClick={() => visit(entry.path)}>{entry.path}</button>
+              )}
+            </div>
+          </div>
+          <div className="fs-info-col">
+            <div className="fs-card">
+              <div className="fs-path">{e.path}</div>
+              <div className="fs-summary">{e.summary}</div>
+              {e.vibe && <div className="fs-vibe">{e.vibe}</div>}
+            </div>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  // ============================================================
+  //  TOAST + LEVEL UP MODAL
+  // ============================================================
+  function Toast({ toast }) {
+    return (
+      <div className={`toast ${toast ? toast.kind : ''} ${toast ? 'show' : ''}`}>
+        {toast?.msg}
+      </div>
+    );
+  }
+
+  function LevelUpModal({ data, onClose }) {
+    if (!data) return null;
+    return (
+      <div className="modal" onClick={(e) => { if (e.target.classList.contains('modal')) onClose(); }}>
+        <div className="modal-content">
+          <h2>LEVEL UP ⚡</h2>
+          <p>you are now</p>
+          <p className="big-rank">{data.rank}</p>
+          <p className="big-rank-lvl">lvl {data.lvl}</p>
+          <button className="btn primary" onClick={onClose}>slay 💅</button>
+        </div>
+      </div>
+    );
+  }
+
+  // ============================================================
+  //  APP ROOT
+  // ============================================================
+  function App() {
+    const game = useGame();
+    const [mode, setMode] = useState('home');
+    const welcomed = useRef(false);
+
+    useEffect(() => {
+      if (welcomed.current) return;
+      welcomed.current = true;
+      const today = todayStr();
+      if (game.state.lastActive === null) {
+        setTimeout(() => game.showToast('first session! do anything to start a streak 🔥', '', 3200), 800);
+      } else if (game.state.lastActive !== today) {
+        const diff = dayDiff(game.state.lastActive, today);
+        if (diff === 1) setTimeout(() => game.showToast(`welcome back! keep that 🔥 ${game.state.streak}-day streak going`, '', 3000), 800);
+        else if (diff > 1) setTimeout(() => game.showToast(`streak reset. new run starts now 💪`, 'bad', 3000), 800);
+      }
+    }, []);
+
+    const props = {
+      state: game.state,
+      setState: game.setState,
+      addXP: game.addXP,
+      showToast: game.showToast,
+    };
+
+    return (
+      <>
+        <TopBar state={game.state} onReset={game.reset} />
+        <Tabs mode={mode} setMode={(m) => { setMode(m); window.scrollTo({top:0, behavior:'smooth'}); }} />
+        <main>
+          {mode === 'home'     && <Home state={game.state} setMode={setMode} />}
+          {mode === 'cards'    && <Cards {...props} />}
+          {mode === 'quiz'     && <Quiz {...props} />}
+          {mode === 'terminal' && <Terminal {...props} />}
+          {mode === 'bash'     && <BashGym {...props} />}
+          {mode === 'ports'    && <Ports {...props} />}
+          {mode === 'fs'       && <FileSystem {...props} />}
+        </main>
+        <Toast toast={game.toast} />
+        <LevelUpModal data={game.levelUp} onClose={() => game.setLevelUp(null)} />
+      </>
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+
+  </script>
+</body>
+</html>
