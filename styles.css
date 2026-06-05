@@ -4,24 +4,29 @@
    ============================================================ */
 
 :root {
-  /* Palette — high contrast, dominant black + sharp accents */
-  --ink:        #f1f2ef;     /* primary text */
-  --paper:      #0a0a0a;     /* base bg */
-  --paper-2:    #111110;     /* surface */
-  --paper-3:    #181816;     /* raised */
-  --rule:       #2a2a26;     /* hairlines */
-  --rule-2:     #3a3a34;
-  --dim:        #8a8a82;
-  --faint:      #555550;
+  /* Palette — dominant black, ONE accent (phosphor green), two supports */
+  --ink:        #ece9df;     /* warm off-white */
+  --paper:      #0b0b0c;     /* base bg */
+  --paper-2:    #131316;     /* surface */
+  --paper-3:    #1b1b20;     /* raised */
+  --rule:       #26262c;     /* hairlines */
+  --rule-2:     #34343c;
+  --dim:        #8a8a90;
+  --faint:      #54545c;
 
-  /* Sharp accents — one dominant, two supporting */
-  --acid:    #b8ff3a;     /* dominant lime/acid green */
-  --acid-2:  #d6ff6e;
-  --amber:   #ffb938;     /* secondary */
-  --magenta: #ff2e88;     /* tertiary */
-  --cyan:    #4af0ff;     /* info */
-  --crimson: #ff3855;     /* error */
-  --pulse:   #ff7a18;     /* streak/heat */
+  /* THE accent — refined phosphor green */
+  --acid:    #5af78e;
+  --acid-2:  #7dffac;
+  --acid-dim:#3ed677;
+
+  /* Supporting (sparing use) */
+  --amber:   #ffc857;     /* warnings/levels */
+  --crimson: #ff5169;     /* errors only */
+  --pulse:   #ff8b3d;     /* streak heat */
+
+  /* Tertiary — kept for legacy callsites but tuned down */
+  --magenta: #ff7ab8;
+  --cyan:    #7dd3fc;
 
   /* Fonts — distinctive monospace stack */
   --display: 'Major Mono Display', 'Courier New', monospace;
@@ -112,14 +117,15 @@ button:focus-visible { outline: 2px solid var(--acid); outline-offset: 3px; }
   align-items: center;
   gap: var(--s3);
   padding: var(--s4) var(--s5);
-  border-right: 2px solid var(--ink);
-  background: var(--acid);
-  color: var(--paper);
+  border-right: 2px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink);
 }
 
 .logo {
   font-size: 22px;
   line-height: 1;
+  filter: hue-rotate(0deg) saturate(1.2);
 }
 
 .brand h1 {
@@ -128,7 +134,7 @@ button:focus-visible { outline: 2px solid var(--acid); outline-offset: 3px; }
   font-weight: 400;
   letter-spacing: 0.5px;
   text-transform: lowercase;
-  color: var(--paper);
+  color: var(--acid);
 }
 
 .sparkle { display: none; }   /* dropping cutesy sparkle */
@@ -137,6 +143,7 @@ button:focus-visible { outline: 2px solid var(--acid); outline-offset: 3px; }
   content: '_';
   animation: blink 1s steps(2) infinite;
   margin-left: 2px;
+  color: var(--acid);
 }
 @keyframes blink { 50% { opacity: 0; } }
 
@@ -151,7 +158,7 @@ button:focus-visible { outline: 2px solid var(--acid); outline-offset: 3px; }
   align-items: center;
   gap: var(--s2);
   padding: var(--s3) var(--s4);
-  border-left: 2px solid var(--ink);
+  border-left: 1px solid var(--rule);
   font-size: 12px;
   color: var(--ink);
   text-transform: uppercase;
@@ -172,12 +179,12 @@ button:focus-visible { outline: 2px solid var(--acid); outline-offset: 3px; }
 }
 
 .stat-rank {
-  color: var(--paper);
+  color: var(--acid);
   font-size: 11px;
-  background: var(--amber);
+  background: transparent;
   padding: 2px 8px;
   font-weight: 700;
-  border: 1.5px solid var(--ink);
+  border: 1.5px solid var(--acid);
   text-transform: lowercase;
 }
 
@@ -187,21 +194,14 @@ button:focus-visible { outline: 2px solid var(--acid); outline-offset: 3px; }
   width: 220px;
   height: 22px;
   background: var(--paper);
-  border: 2px solid var(--ink);
+  border: 2px solid var(--rule-2);
   overflow: hidden;
 }
 
 .xp-bar {
   height: 100%;
   width: 0%;
-  background:
-    repeating-linear-gradient(
-      90deg,
-      var(--acid) 0,
-      var(--acid) 8px,
-      var(--acid-2) 8px,
-      var(--acid-2) 16px
-    );
+  background: var(--acid);
   transition: width 600ms cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
 }
@@ -214,18 +214,16 @@ button:focus-visible { outline: 2px solid var(--acid); outline-offset: 3px; }
   justify-content: center;
   font-size: 11px;
   font-weight: 700;
-  color: var(--paper);
+  color: var(--ink);
   font-variant-numeric: tabular-nums;
   letter-spacing: 1px;
   z-index: 2;
-  mix-blend-mode: difference;
-  filter: invert(1);
 }
 
 .reset-btn {
   background: var(--paper);
   border: none;
-  border-left: 2px solid var(--ink);
+  border-left: 1px solid var(--rule);
   color: var(--dim);
   width: 48px;
   cursor: pointer;
@@ -352,26 +350,25 @@ main {
 
 .tagline::before { content: '// '; color: var(--acid); }
 
-/* Mode cards — flat brutalist tiles */
+/* Mode cards — flat brutalist tiles, no grid bg to bleed through */
 .mode-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 0;
+  gap: var(--s3);
   margin: var(--s7) 0 var(--s7);
-  border: 2px solid var(--ink);
-  background: var(--ink);
+  background: transparent;
+  border: none;
 }
 
 .mode-card {
-  background: var(--paper);
-  border: none;
-  outline: 1px solid var(--ink);
+  background: var(--paper-2);
+  border: 1px solid var(--rule-2);
   padding: var(--s5);
   cursor: pointer;
   text-align: left;
   color: var(--ink);
   font-family: inherit;
-  transition: all 160ms;
+  transition: all 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
   position: relative;
   min-height: 220px;
   display: flex;
@@ -379,15 +376,18 @@ main {
   justify-content: space-between;
 }
 
-.mode-card:nth-child(6n+1):hover { background: var(--acid); color: var(--paper); }
-.mode-card:nth-child(6n+2):hover { background: var(--amber); color: var(--paper); }
-.mode-card:nth-child(6n+3):hover { background: var(--magenta); color: var(--paper); }
-.mode-card:nth-child(6n+4):hover { background: var(--cyan); color: var(--paper); }
-.mode-card:nth-child(6n+5):hover { background: var(--acid-2); color: var(--paper); }
-.mode-card:nth-child(6n+6):hover { background: var(--pulse); color: var(--paper); }
-
-.mode-card:hover { transform: translate(-3px, -3px); box-shadow: 3px 3px 0 var(--ink); z-index: 2; }
-.mode-card:hover .mc-xp { background: var(--paper); color: var(--ink); border-color: var(--paper); }
+.mode-card:hover {
+  background: var(--acid);
+  color: var(--paper);
+  border-color: var(--acid);
+  transform: translate(-3px, -3px);
+  box-shadow: 4px 4px 0 var(--acid-dim);
+  z-index: 2;
+}
+.mode-card:hover h3,
+.mode-card:hover p { color: var(--paper); }
+.mode-card:hover .mc-xp { background: var(--paper); color: var(--acid); border-color: var(--paper); }
+.mode-card:hover::before { color: var(--paper); opacity: 0.7; }
 
 /* Card number badge */
 .mode-card::before {
@@ -397,10 +397,10 @@ main {
   right: var(--s4);
   font-family: var(--mono);
   font-size: 11px;
-  color: var(--dim);
+  color: var(--faint);
   letter-spacing: 1px;
+  font-weight: 700;
 }
-.mode-card:hover::before { color: var(--paper); }
 
 .mc-icon {
   font-size: 40px;
@@ -444,13 +444,14 @@ main {
 
 /* Progress block */
 .progress-summary {
-  border: 2px solid var(--ink);
+  border: 1px solid var(--rule-2);
   padding: 0;
   margin-bottom: var(--s6);
+  background: var(--paper);
 }
 
 .progress-summary h3 {
-  background: var(--ink);
+  background: var(--paper-2);
   color: var(--acid);
   font-family: var(--mono);
   font-size: 13px;
@@ -458,20 +459,20 @@ main {
   padding: var(--s3) var(--s4);
   text-transform: uppercase;
   letter-spacing: 2px;
+  border-bottom: 1px solid var(--rule-2);
 }
-.progress-summary h3::before { content: '┃ '; }
+.progress-summary h3::before { content: '┃ '; color: var(--acid); }
 
 .prog-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 0;
+  gap: 1px;
+  background: var(--rule);
 }
 
 .prog-item {
   background: var(--paper);
   padding: var(--s4) var(--s5);
-  border-top: 2px solid var(--ink);
-  border-right: 2px solid var(--ink);
   transition: background 120ms;
 }
 .prog-item:hover { background: var(--paper-2); }
@@ -488,9 +489,9 @@ main {
 
 .pi-val {
   font-family: var(--display);
-  font-size: 28px;
+  font-size: 26px;
   font-weight: 400;
-  color: var(--ink);
+  color: var(--acid);
   letter-spacing: -1px;
   line-height: 1;
 }

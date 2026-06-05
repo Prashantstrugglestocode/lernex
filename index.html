@@ -256,8 +256,8 @@
           <p className="tagline">learn linux, OS, networking, and bash without dying of boredom. no cap.</p>
         </div>
         <div className="mode-grid">
-          {cards.map(c =>
-            <button key={c.id} className="mode-card" onClick={() => setMode(c.id)}>
+          {cards.map((c, i) =>
+            <button key={c.id} className="mode-card" data-num={String(i+1).padStart(2,'0')} onClick={() => setMode(c.id)}>
               <div className="mc-icon">{c.icon}</div>
               <h3>{c.title}</h3>
               <p>{c.desc}</p>
