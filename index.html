@@ -3,20 +3,24 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="author" content="Prashant Kumar" />
+  <meta name="description" content="lernex — gamified linux, OS, networking, and bash. by Prashant Kumar." />
+  <meta name="theme-color" content="#0b0b0c" />
   <title>lernex · learn linux/os/bash without dying of boredom</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Major+Mono+Display&family=VT323&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=3" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🐧%3C/text%3E%3C/svg%3E" />
 
   <!-- React + Babel via CDN (no build step — just open this file) -->
   <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.24.0/babel.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
 
   <!-- App data (sets window.DATA) -->
-  <script src="data.js"></script>
+  <script src="data.js?v=3"></script>
 </head>
 
 <body>
@@ -28,7 +32,73 @@
        ================================================================ -->
   <script type="text/babel" data-presets="react">
 
-  const { useState, useEffect, useRef, useCallback, useMemo } = React;
+  const { useState, useEffect, useRef, useCallback, useMemo, createContext, useContext } = React;
+
+  // ============================================================
+  //  SOUND ENGINE — synthesized via Web Audio, zero assets
+  // ============================================================
+  const SOUND_KEY = 'lernex_sound_v1';
+  let _ac = null;
+  const getAC = () => {
+    if (_ac) return _ac;
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return null;
+    _ac = new Ctx();
+    return _ac;
+  };
+  const blip = (freq, dur = 0.08, type = 'square', vol = 0.05) => {
+    const ac = getAC(); if (!ac) return;
+    const o = ac.createOscillator(); const g = ac.createGain();
+    o.type = type; o.frequency.value = freq;
+    g.gain.setValueAtTime(vol, ac.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + dur);
+    o.connect(g); g.connect(ac.destination);
+    o.start(); o.stop(ac.currentTime + dur);
+  };
+  const SOUNDS = {
+    xp:      () => { blip(660, 0.05, 'square'); setTimeout(() => blip(880, 0.06, 'square'), 40); },
+    correct: () => { blip(523, 0.06); setTimeout(() => blip(659, 0.06), 60); setTimeout(() => blip(784, 0.1), 120); },
+    wrong:   () => { blip(220, 0.12, 'sawtooth', 0.04); setTimeout(() => blip(150, 0.18, 'sawtooth', 0.04), 80); },
+    flip:    () => { blip(420, 0.04, 'triangle', 0.03); },
+    click:   () => { blip(880, 0.02, 'square', 0.025); },
+    levelUp: () => {
+      const notes = [523, 659, 784, 1046];
+      notes.forEach((n, i) => setTimeout(() => blip(n, 0.18, 'triangle', 0.06), i * 90));
+    },
+    streak:  () => { blip(720, 0.06, 'triangle'); setTimeout(() => blip(960, 0.1, 'triangle'), 70); },
+  };
+
+  const SoundCtx = createContext({ on: true, play: () => {}, toggle: () => {} });
+  function SoundProvider({ children }) {
+    const [on, setOn] = useState(() => {
+      try { const v = localStorage.getItem(SOUND_KEY); return v === null ? true : v === '1'; } catch { return true; }
+    });
+    useEffect(() => { try { localStorage.setItem(SOUND_KEY, on ? '1' : '0'); } catch {} }, [on]);
+    const play = useCallback((name) => { if (!on) return; const fn = SOUNDS[name]; if (fn) try { fn(); } catch {} }, [on]);
+    const toggle = useCallback(() => setOn(v => !v), []);
+    return <SoundCtx.Provider value={{ on, play, toggle }}>{children}</SoundCtx.Provider>;
+  }
+  const useSound = () => useContext(SoundCtx);
+
+  // ============================================================
+  //  CONFETTI
+  // ============================================================
+  const fireConfetti = (opts = {}) => {
+    if (typeof window.confetti !== 'function') return;
+    window.confetti({
+      particleCount: 90, spread: 75, origin: { y: 0.6 },
+      colors: ['#5af78e', '#7dffac', '#ffc857', '#ff7ab8', '#7dd3fc'],
+      scalar: 0.9, ticks: 200, ...opts,
+    });
+  };
+  const fireLevelConfetti = () => {
+    if (typeof window.confetti !== 'function') return;
+    const burst = (x, delay) => setTimeout(() => window.confetti({
+      particleCount: 70, spread: 80, origin: { x, y: 0.5 },
+      colors: ['#5af78e', '#7dffac', '#ffc857', '#ff7ab8'], scalar: 1.05, ticks: 240,
+    }), delay);
+    burst(0.2, 0); burst(0.8, 120); burst(0.5, 240);
+  };
 
   // ============================================================
   //  STATE HELPERS
@@ -167,34 +237,55 @@
   //  TOP BAR
   // ============================================================
   function TopBar({ state, onReset }) {
+    const sound = useSound();
     const cur = levelFor(state.xp);
     const nxt = nextLevel(state.xp);
     const xpFromCur = state.xp - cur.xp;
     const span = nxt ? (nxt.xp - cur.xp) : (xpFromCur || 1);
     const pct = nxt ? Math.min(100, Math.round((xpFromCur / span) * 100)) : 100;
+    const streakHeat = state.streak >= 30 ? 'inferno' : state.streak >= 7 ? 'hot' : state.streak > 0 ? 'warm' : 'cold';
 
     return (
       <header className="topbar">
         <div className="brand">
           <span className="logo">🐧</span>
-          <h1>lernex<span className="sparkle">✨</span></h1>
+          <h1>lernex</h1>
         </div>
-        <div className="stats">
-          <div className="stat" title="Level">
-            <span className="stat-label">lvl</span>
-            <span className="stat-val">{cur.lvl}</span>
-            <span className="stat-rank">{cur.name}</span>
+
+        <div className="hud">
+          <div className="hud-cell hud-level" title="Level">
+            <span className="hud-label">lvl</span>
+            <span className="hud-lvl-num">{cur.lvl}</span>
+            <span className="hud-rank">{cur.name}</span>
           </div>
-          <div className="stat xp-stat" title="XP — earn by playing">
+
+          <div className="hud-cell hud-xp" title="XP — earn by playing">
             <div className="xp-bar-wrap">
               <div className="xp-bar" style={{ width: pct + '%' }} />
-              <span className="xp-text">{nxt ? `${state.xp} / ${nxt.xp} xp` : `${state.xp} xp (MAX)`}</span>
+              <span className="xp-text">{nxt ? `${state.xp} / ${nxt.xp} xp` : `${state.xp} xp · MAX`}</span>
             </div>
           </div>
-          <div className="stat" title="Daily streak">
-            <span className="stat-val streak-pulse" key={state.streak}>🔥 {state.streak}</span>
+
+          <div className={`hud-cell hud-streak streak-${streakHeat}`} title="Daily streak">
+            <span className="streak-flame" key={state.streak}>🔥</span>
+            <span className="streak-count">{state.streak}</span>
+            <span className="hud-label">day{state.streak === 1 ? '' : 's'}</span>
           </div>
-          <button className="reset-btn" title="reset all progress" onClick={() => { if (confirm("reset ALL progress? this can't be undone fr.")) onReset(); }}>↺</button>
+
+          <div className="hud-cell hud-actions">
+            <button
+              className={`icon-btn ${sound.on ? 'on' : 'off'}`}
+              title={sound.on ? 'sound on (click to mute)' : 'sound muted (click to unmute)'}
+              onClick={() => { sound.toggle(); sound.play('click'); }}>
+              {sound.on ? '♪' : '♪̸'}
+            </button>
+            <button
+              className="icon-btn"
+              title="reset all progress"
+              onClick={() => { if (confirm("reset ALL progress? this can't be undone fr.")) onReset(); }}>
+              ↺
+            </button>
+          </div>
         </div>
       </header>
     );
@@ -284,27 +375,67 @@
   //  FLASHCARDS
   // ============================================================
   function Cards({ state, setState, addXP, showToast }) {
+    const sound = useSound();
     const [cat, setCat] = useState('all');
     const list = useMemo(() => cat === 'all' ? DATA.flashcards : DATA.flashcards.filter(c => c.cat === cat), [cat]);
     const [idx, setIdx] = useState(0);
     const [flipped, setFlipped] = useState(false);
+    const [swipeOffset, setSwipeOffset] = useState(0);
+    const touchStart = useRef(null);
 
     useEffect(() => { setIdx(0); setFlipped(false); }, [cat]);
 
     const c = list[idx] || DATA.flashcards[0];
     const id = `${c.cat}|${c.front}`;
+    const learned = !!state.cardsSeen[id];
 
-    const prev = () => { setIdx((idx - 1 + list.length) % list.length); setFlipped(false); };
-    const next = () => { setIdx((idx + 1) % list.length); setFlipped(false); };
+    const prev = () => { setIdx((idx - 1 + list.length) % list.length); setFlipped(false); sound.play('click'); };
+    const next = () => { setIdx((idx + 1) % list.length); setFlipped(false); sound.play('click'); };
+    const flip = () => { setFlipped(f => !f); sound.play('flip'); };
     const mark = () => {
-      if (!state.cardsSeen[id]) {
+      if (!learned) {
         setState(s => ({ ...s, cardsSeen: { ...s.cardsSeen, [id]: true } }));
         addXP(2);
+        sound.play('xp');
         showToast(`+2 xp · ${pick(DATA.hype)}`, 'xp');
       } else {
         showToast('already learned this one ✓');
       }
       setTimeout(next, 350);
+    };
+
+    // Keyboard navigation
+    useEffect(() => {
+      const onKey = (e) => {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+        if (e.key === 'ArrowLeft') prev();
+        else if (e.key === 'ArrowRight') next();
+        else if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); flip(); }
+        else if (e.key.toLowerCase() === 'g') mark();
+      };
+      window.addEventListener('keydown', onKey);
+      return () => window.removeEventListener('keydown', onKey);
+    });
+
+    // Touch swipe
+    const onTouchStart = (e) => { const t = e.touches[0]; touchStart.current = { x: t.clientX, y: t.clientY, t: Date.now() }; };
+    const onTouchMove = (e) => {
+      if (!touchStart.current) return;
+      const dx = e.touches[0].clientX - touchStart.current.x;
+      setSwipeOffset(Math.max(-150, Math.min(150, dx)));
+    };
+    const onTouchEnd = (e) => {
+      if (!touchStart.current) return;
+      const dx = (e.changedTouches[0]?.clientX || 0) - touchStart.current.x;
+      const dy = (e.changedTouches[0]?.clientY || 0) - touchStart.current.y;
+      const dt = Date.now() - touchStart.current.t;
+      touchStart.current = null;
+      setSwipeOffset(0);
+      if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy)) {
+        if (dx > 0) prev(); else next();
+      } else if (dt < 250 && Math.abs(dx) < 10 && Math.abs(dy) < 10) {
+        flip();
+      }
     };
 
     return (
@@ -325,16 +456,25 @@
               <option value="bash">bash scripting</option>
               <option value="text">text processing</option>
               <option value="sec">security</option>
+              <option value="sched">scheduling</option>
+              <option value="mem">memory & VM</option>
+              <option value="ipc">ipc & sync</option>
+              <option value="asm">assembly</option>
             </select>
           </label>
-          <span className="counter">card {idx+1} / {list.length}</span>
+          <span className="counter">card {idx+1} / {list.length}{learned ? ' ✓' : ''}</span>
         </div>
-        <div className="card-stage">
-          <div className={`flashcard ${flipped ? 'flipped' : ''}`} onClick={() => setFlipped(f => !f)}>
+        <div className="card-stage"
+             onTouchStart={onTouchStart}
+             onTouchMove={onTouchMove}
+             onTouchEnd={onTouchEnd}>
+          <div className={`flashcard ${flipped ? 'flipped' : ''} ${learned ? 'learned' : ''}`}
+               style={{ transform: `translateX(${swipeOffset}px) ${flipped ? 'rotateY(180deg)' : ''}`, opacity: 1 - Math.abs(swipeOffset)/300 }}
+               onClick={flip}>
             <div className="card-face card-front">
               <div className="card-cat-tag">{c.cat}</div>
               <div className="card-term">{c.front}</div>
-              <div className="card-hint">click to flip ⇣</div>
+              <div className="card-hint">tap to flip · swipe to navigate</div>
             </div>
             <div className="card-face card-back">
               <div className="card-explain">{c.back}</div>
@@ -343,10 +483,11 @@
           </div>
         </div>
         <div className="card-controls">
-          <button className="btn ghost" onClick={prev}>← prev</button>
-          <button className="btn primary" onClick={mark}>got it ✓ (+2 xp)</button>
-          <button className="btn ghost" onClick={next}>next →</button>
+          <button className="btn ghost" onClick={prev} aria-label="previous">← prev</button>
+          <button className="btn primary" onClick={mark}>{learned ? 'got it ✓' : 'got it ✓ (+2 xp)'}</button>
+          <button className="btn ghost" onClick={next} aria-label="next">next →</button>
         </div>
+        <div className="kbd-hint">keys: ← prev · → next · space flip · g got it</div>
       </section>
     );
   }
@@ -355,29 +496,35 @@
   //  QUIZ
   // ============================================================
   const QUIZ_SIZE = 10;
-  function Quiz({ state, setState, addXP }) {
+  function Quiz({ state, setState, addXP, showToast }) {
+    const sound = useSound();
     const [deck, setDeck] = useState(() => shuffle(DATA.quiz).slice(0, QUIZ_SIZE));
     const [pos, setPos] = useState(0);
     const [score, setScore] = useState(0);
     const [picked, setPicked] = useState(null); // index of picked option
     const [done, setDone] = useState(false);
+    const [combo, setCombo] = useState(0);
+    const [bestCombo, setBestCombo] = useState(0);
 
     const restart = () => {
       setDeck(shuffle(DATA.quiz).slice(0, QUIZ_SIZE));
-      setPos(0); setScore(0); setPicked(null); setDone(false);
+      setPos(0); setScore(0); setPicked(null); setDone(false); setCombo(0); setBestCombo(0);
     };
 
     if (done) {
-      const bonus = score === deck.length ? 20 : (score >= deck.length * 0.8 ? 10 : 0);
+      const perfect = score === deck.length;
+      const bonus = perfect ? 20 : (score >= deck.length * 0.8 ? 10 : 0);
       return (
         <section className="mode active">
           <div className="quiz-done">
-            <h2>quiz complete 🎉</h2>
-            <p>u got <strong>{score} / {deck.length}</strong> · {
-              score === deck.length ? 'PERFECT ✨ +20 bonus xp' :
-              bonus ? '+10 bonus xp' : 'shake it off, run it back'
+            <h2>{perfect ? 'PERFECT RUN 🏆' : 'quiz complete'}</h2>
+            <p className="quiz-done-score">{score} <span>/ {deck.length}</span></p>
+            <p className="quiz-done-msg">{
+              perfect ? '+20 bonus xp · ur built different' :
+              bonus ? '+10 bonus xp · clean work' : 'shake it off, run it back'
             }</p>
-            <button className="btn primary" onClick={restart}>play again</button>
+            {bestCombo >= 3 && <p className="quiz-done-combo">🔥 best combo: {bestCombo}x</p>}
+            <button className="btn primary" onClick={restart}>play again →</button>
           </div>
         </section>
       );
@@ -390,7 +537,18 @@
       setState(s => ({ ...s, quizSeen: s.quizSeen + 1, quizCorrect: i === q.answer ? s.quizCorrect + 1 : s.quizCorrect }));
       if (i === q.answer) {
         setScore(s => s + 1);
-        addXP(5);
+        const newCombo = combo + 1;
+        setCombo(newCombo);
+        if (newCombo > bestCombo) setBestCombo(newCombo);
+        sound.play('correct');
+        let xp = 5;
+        if (newCombo === 3) { xp += 3; showToast('🔥 3x combo · +3 bonus xp', 'xp'); }
+        else if (newCombo === 5) { xp += 5; showToast('⚡ 5x combo · +5 bonus xp', 'xp'); fireConfetti({ particleCount: 40, spread: 50, origin: { y: 0.7 } }); }
+        else if (newCombo === 10) { xp += 15; showToast('💎 10x COMBO · +15 bonus xp', 'xp'); fireConfetti(); }
+        addXP(xp);
+      } else {
+        setCombo(0);
+        sound.play('wrong');
       }
     };
 
@@ -413,7 +571,9 @@
         <div className="quiz-head">
           <span className="counter">q {pos+1} / {deck.length}</span>
           <span className="counter">score: {score}</span>
+          {combo >= 2 && <span className={`combo-pill combo-${Math.min(10, combo)}`} key={combo}>🔥 {combo}x combo</span>}
         </div>
+        <div className="quiz-progress"><div className="quiz-progress-fill" style={{ width: ((pos / deck.length) * 100) + '%' }} /></div>
         <div className="quiz-card">
           <h3 className="quiz-q">{q.q}</h3>
           <div className="quiz-options">
@@ -814,15 +974,22 @@
   }
 
   function LevelUpModal({ data, onClose }) {
+    const sound = useSound();
+    useEffect(() => {
+      if (!data) return;
+      fireLevelConfetti();
+      sound.play('levelUp');
+    }, [data]);
     if (!data) return null;
     return (
       <div className="modal" onClick={(e) => { if (e.target.classList.contains('modal')) onClose(); }}>
-        <div className="modal-content">
-          <h2>LEVEL UP ⚡</h2>
-          <p>you are now</p>
+        <div className="modal-content level-up">
+          <div className="modal-burst">⚡</div>
+          <h2>LEVEL UP</h2>
+          <p className="modal-sub">you are now</p>
           <p className="big-rank">{data.rank}</p>
           <p className="big-rank-lvl">lvl {data.lvl}</p>
-          <button className="btn primary" onClick={onClose}>slay 💅</button>
+          <button className="btn primary" onClick={() => { sound.play('click'); onClose(); }}>slay →</button>
         </div>
       </div>
     );
@@ -869,13 +1036,20 @@
           {mode === 'ports'    && <Ports {...props} />}
           {mode === 'fs'       && <FileSystem {...props} />}
         </main>
+        <footer className="footsig">
+          <span>made by</span>
+          <a href="#" onClick={(e) => e.preventDefault()}>Prashant Kumar</a>
+          <span>· no login · progress lives in ur browser</span>
+        </footer>
         <Toast toast={game.toast} />
         <LevelUpModal data={game.levelUp} onClose={() => game.setLevelUp(null)} />
       </>
     );
   }
 
-  ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  ReactDOM.createRoot(document.getElementById('root')).render(
+    <SoundProvider><App /></SoundProvider>
+  );
 
   </script>
 </body>

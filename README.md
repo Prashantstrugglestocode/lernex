@@ -2,6 +2,8 @@
 
 gamified linux / os / networking / bash learning. dark, brutalist, terminal-flavored. built for ppl who are tired of dry tutorials.
 
+by **Prashant Kumar**. progress lives in your browser — no login, no tracking.
+
 ## what's inside
 
 - **flashcards** — ~150 cards across filesystem, commands, permissions, processes, OS internals, networking, package managers, bash scripting, text processing, security
@@ -49,6 +51,10 @@ answer the prompts (it auto-detects static). that's it.
 - vanilla html + css + react (cdn) + jsx-via-babel-standalone
 - single `data.js` content file (~120kb of curated linux content)
 - single `app.jsx` inlined in `index.html`
+
+## author
+
+**Prashant Kumar**
 
 ## license
 
